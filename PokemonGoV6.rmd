@@ -1,0 +1,699 @@
+---
+title: "Pokemon Go V2"
+output:
+  html_document:
+    df_print: paged
+---
+
+<!-- Sub heading -->
+This notebook is the PokemonGo project for the course 'Customer Analytics'
+
+<!-- Team Members -->
+####<span style="color:maroon">Team</span>
+
+* *DEVOS Pierre-Yvan*
+* *JACQUEMIN-LORRIAUX Marine*
+* *KICK Charles-Louis*
+* *LEGENDRE Benoit*
+
+***
+
+## ~~~~~~~~~~
+# Preparation
+## ~~~~~~~~~~
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Import the libraries needed
+```{r warning=FALSE}
+library(dplyr)
+library(Amelia)
+library(ggplot2)
+library(tidyr)
+library(caTools)
+```
+
+
+Import and read the data
+```{r}
+# setwd("~/Desktop/MSc Data Analytics & AI/Semester 2 /Customer Analytics/Pokemon Go case")
+setwd("C:/Users/Charles-Louis/Desktop/MSc/2 - Customer Analytics/PokemonGo")
+
+
+# 1 -	Customerdata: contains player-related information 
+customer = read.csv("customerdata.csv" )
+
+# 2 - Summerfintrx & Fallfintrx: contain transaction-related information
+summer_trx = read.csv("summerfintrx.csv" )
+fall_trx = read.csv("fallfintrx.csv"   )
+
+# 3 - SummersessTRX and FallsessTRX: contain session-related information
+fall_sess   = read.csv("fallsesstrx.csv"  )
+summer_sess = read.csv("summersesstrx.csv")
+```
+
+Convert Date fields into Date format
+```{r}
+customer$Registrationdate = as.Date(customer$Registrationdate,"%Y-%m-%d")
+summer_sess$Date = as.Date(summer_sess$Date,"%Y-%m-%d")
+fall_sess$Date = as.Date(fall_sess$Date,"%Y-%m-%d")
+summer_trx$Date = as.Date(summer_trx$Date,"%Y-%m-%d")
+fall_trx$Date = as.Date(fall_trx$Date,"%Y-%m-%d")
+```
+
+Quick analysis of the customer table with a summary
+```{r}
+summary(customer)
+```
+
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Assignment 1 (3 points) - Creation of a basetable
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+## 1) Create a basetable containing the active customers (at least 1 play session during the summer period). Indicate whether they received the fall boost package discount or not. 
+
+```{r}
+#We need to create a basetable with only active customer from the summer ( it's why I didn't merge summer and fall transaction/ session )
+
+basetable_summer = summer_sess %>% select(CustomerID) %>% distinct(CustomerID)
+basetable_summer = basetable_summer %>%
+  left_join(customer, by = 'CustomerID') %>%
+  select(-X) %>% 
+  arrange(CustomerID)
+basetable_summer
+```
+
+## 2) Calculate the demographics and RFM metrics for the relevant play and financial transactions database.
+
+### 2.1) RFM metrics
+
+We assign monetary values to each ProductID in transaction dataframes
+```{r}
+summer_trx<- summer_trx %>% mutate(Value = c(2.99, 4.99, 9.99, 25, 99)[ProductID])
+fall_trx <- fall_trx %>% mutate(Value = c(2.99, 4.99, 9.99, 25, 99)[ProductID])
+```
+
+We define the end date for the period ( here we are studying summer)
+```{r}
+enddate_summer <- as.Date("2018-08-31","%Y-%m-%d")
+```
+
+We are going to evaluate the frequency and recency based on the sessions, then we will evaluate the monetary value based on the transaction dataset. We also calculate the Recency and Frequency of transactions as additional information.
+```{r}
+summer_sess_RF <- summer_sess %>% group_by(CustomerID) %>% 
+                      summarise(Recency = as.numeric(enddate_summer-max(Date)), 
+                                Frequency = n() ) %>% 
+                      ungroup()
+
+summer_trx_RFM <- summer_trx %>% group_by(CustomerID) %>% 
+                            summarise(Recency_Transac = as.numeric(enddate_summer-max(Date)), 
+                                      Frequency_Transac = n(), 
+                                      Monetary = sum(Value)) %>% 
+                            ungroup()
+```
+
+
+Here we get the RFM for each summer user (PAID or NOT)
+```{r}
+summer_RFM = merge(summer_sess_RF,summer_trx_RFM,by="CustomerID",all.x=TRUE)
+
+summer_RFM[is.na(summer_RFM$Monetary),"Monetary"] <- 0
+summer_RFM[is.na(summer_RFM$Frequency_Transac),"Frequency_Transac"] <- 0
+
+summary(summer_RFM)
+```
+
+```{r}
+summer_RFM[is.na(summer_RFM$Recency_Transac),"Recency_Transac"] <- -1
+
+summer_RFM
+```
+
+### 2.2) Demographics metrics
+
+Here we are joining the RFM table with the customer informations
+```{r}
+basetable_summer = summer_RFM %>%
+  left_join(customer, by = 'CustomerID') %>%
+  select(-X)
+basetable_summer
+```
+
+Here we join the previous information with the customer session information and the number of transactions
+```{r}
+summer_sess_cust_stat <- summer_sess %>% group_by(CustomerID) %>% select(-c(X, PlayID, Date)) %>%
+                          summarise_all(funs(sum))
+
+summer_sess_cust_nb <- summer_sess %>% group_by(CustomerID) %>% summarise(NbSess = n())
+
+summer_trx_cust_stat <- summer_trx %>% group_by(CustomerID,ProductID) %>% summarise(NbTrx = n()) %>% 
+                        mutate(ProductID = paste("NbTrxProd",ProductID,sep="")) %>% 
+                        spread(ProductID,NbTrx)
+
+summer_trx_cust_nb <- summer_trx %>% group_by(CustomerID) %>% summarise(NbTrx = n())
+```
+
+```{r}
+basetable_summer = basetable_summer %>%
+                    left_join(summer_sess_cust_stat, by = 'CustomerID') %>%
+                    left_join(summer_sess_cust_nb, by = 'CustomerID') %>%
+                    left_join(summer_trx_cust_stat, by = 'CustomerID') %>%
+                    left_join(summer_trx_cust_nb, by = 'CustomerID') 
+
+basetable_summer[is.na(basetable_summer)] <- 0
+
+basetable_summer
+```
+
+## Based on these metrics, sketch a general profile (use the correct descriptive metric for each variable) of the customer base according to demographics, spending and usage transactions.
+```{r}
+basetable_summer %>% summarise_all(funs(mean))
+```
+```{r}
+basetable_summer %>% group_by(CustomerType) %>% summarise_all(funs(mean))
+```
+
+
+## Calculate the customer life time value for these customers. You can make assumptions for unknown variables (e.g., discount rate, # periods in the future), but motivate your assumptions clearly in the report.
+
+Quick calculation of the transaction churn rate
+```{r}
+cbind(summer_trx %>% summarise(Summer_Clients = n_distinct(CustomerID)),
+      fall_trx %>% filter(CustomerID %in% unique(summer_trx$CustomerID)) %>% 
+                    summarise(Fall_NotChurners = n_distinct(CustomerID))
+      ) %>% mutate(ChurnRate = 1-Fall_NotChurners/Summer_Clients)
+```
+
+We create the CLV calculation formula
+```{r}
+calc_clv<-function(margin,r,d,acquisition,t)
+{
+  clv<- -acquisition
+  for(i in 0:t)#attention: start in year 0
+  {
+    clv<-clv+((r^i)*margin/(1+d)^i)
+  }
+  return (clv)
+}
+```
+
+Assumptions : 
+- acquisition = 0                                       We don't have Acquisition Cost
+- margin = Monetary                                     We use the monetary value of each user
+- r (Retention probability) = average churn = 0.657     
+- t (Time) = 4                                          Corresponds to 4 seasons = 1 year (churn is quarterly)
+- d (Discount Rate) = 0,1                               Quarterly discount rate
+```{r}
+basetable_summer$clv <- apply(basetable_summer[,c("Recency","Frequency","Monetary")],1,
+                              function(x)calc_clv(x[3],0.657,0.1,0,4))
+```
+
+Now we have a new variable which is the CLV for each user. 
+```{r}
+basetable_summer[,c("CustomerID","Duration","clv")]
+```
+
+NB : We can also create a CLV based on time spent on the game. The churn rate needs to be calculated on session tables and the margin is now the time spent
+
+Sessions average churn
+```{r}
+cbind(summer_sess %>% summarise(Summer_Users = n_distinct(CustomerID)),
+      fall_sess %>% filter(CustomerID %in% unique(summer_trx$CustomerID)) %>% 
+                    summarise(Fall_NotChurners = n_distinct(CustomerID))
+      ) %>% mutate(ChurnRate = 1-Fall_NotChurners/Summer_Users)
+```
+```{r}
+basetable_summer$clv_time <- apply(basetable_summer[,c("Recency","Frequency","Duration")],1,
+                              function(x)calc_clv(x[3],0.657,0.1,0,4))
+
+basetable_summer[,c("CustomerID","Duration","clv_time")]
+```
+
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+## FOR THE REPORT : EXPLORATORY ANALYSIS OF THE BASETABLE
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+```{r}
+ggplot(basetable_summer, aes(x=Frequency, colour=CustomerType)) +
+  theme_bw() +
+  scale_x_continuous(breaks=c(1:30)) +
+  geom_bar(alpha=0.6) +
+  ggtitle("Distribution by Frequency")
+```
+```{r}
+ggplot(basetable_summer, aes(x=Recency, colour=CustomerType)) +
+  theme_bw() +
+  geom_bar(alpha=0.6) +
+  ggtitle("Distribution by Recency")
+```
+
+```{r}
+basetable_summer$CustomerType <- as.factor(basetable_summer$CustomerType)
+
+ggplot(basetable_summer)+ aes(x = CustomerType, y = Monetary, colour=CustomerType) +
+
+  theme_bw() +
+  geom_boxplot()
+```
+```{r}
+basetable_summer$CustomerType <- as.factor(basetable_summer$CustomerType)
+
+ggplot(basetable_summer)+ aes(x = CustomerType, y = Age, colour=CustomerType) +
+
+  theme_bw() +
+  geom_boxplot()
+```
+
+```{r}
+basetable_summer$CustomerType <- as.factor(basetable_summer$CustomerType)
+
+ggplot(basetable_summer)+ aes(x = CustomerType, y = Pokestops, colour=CustomerType) +
+
+  theme_bw() +
+  geom_boxplot()
+```
+```{r}
+basetable_summer$CustomerType <- as.factor(basetable_summer$CustomerType)
+
+ggplot(basetable_summer)+ aes(x = CustomerType, y = Experience, colour=CustomerType) +
+
+  theme_bw() +
+  geom_boxplot()
+```
+
+```{r}
+basetable_summer$CustomerType <- as.factor(basetable_summer$CustomerType)
+
+ggplot(basetable_summer)+ aes(x = CustomerType, y = Gyms, colour=CustomerType) +
+
+  theme_bw() +
+  geom_boxplot()
+```
+```{r}
+basetable_summer$CustomerType <- as.factor(basetable_summer$CustomerType)
+
+ggplot(basetable_summer)+ aes(x = CustomerType, y = Raids, colour=CustomerType) +
+
+  theme_bw() +
+  geom_boxplot()
+```
+
+```{r}
+basetable_summer$CustomerType <- as.factor(basetable_summer$CustomerType)
+
+ggplot(basetable_summer)+ aes(x = CustomerType, y = Social, colour=CustomerType) +
+
+  theme_bw() +
+  geom_boxplot()
+```
+```{r}
+basetable_summer$CustomerType <- as.factor(basetable_summer$CustomerType)
+
+ggplot(basetable_summer)+ aes(x = CustomerType, y = Pokemons, colour=CustomerType) +
+
+  theme_bw() +
+  geom_boxplot()
+```
+```{r}
+basetable_summer$CustomerType <- as.factor(basetable_summer$CustomerType)
+
+ggplot(basetable_summer)+ aes(x = CustomerType, y = Distance, colour=CustomerType) +
+
+  theme_bw() +
+  geom_boxplot()
+```
+```{r}
+basetable_summer$CustomerType <- as.factor(basetable_summer$CustomerType)
+
+ggplot(basetable_summer)+ aes(x = CustomerType, y = clv, colour=CustomerType) +
+
+  theme_bw() +
+  geom_boxplot()
+```
+
+
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#  Assignment 2 (3,5 points) - Lifecycle grids
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+## This assignment focuses on the creation of relevant lifecycle grids. Based on the data provided, distinct grids may be made that each hold managerial value. The goal is to select those grids most relevant to Niantic and to discuss their value in detail - hence, the creation of a series of grids is recommended as this will help you collect insights and select those most relevant to the case. Keep in mind that the goals of Niantic include to better understand their player segments, the financial value of the database, and to eventually increase profits in the future.
+
+
+#Here we replace continous value per categorical value for Life Cycle Grid
+```{r}
+basetable_summer <-  basetable_summer %>%
+  mutate(segm.freq=ifelse(between(Frequency, 1, 1), '1',
+                          ifelse(between(Frequency, 2, 2), '2',
+                                 ifelse(between(Frequency, 3, 3), '3',
+                                        ifelse(between(Frequency, 4, 4), '4',
+                                               ifelse(between(Frequency, 5, 5), '5','>5')))))) %>%
+  mutate(segm.rec=ifelse(between(Recency, 0, 5), '0-5 days',
+                         ifelse(between(Recency, 6, 10), '6-10 days',
+                                ifelse(between(Recency, 11, 20), '11-20 days',
+                                       ifelse(between(Recency, 21, 30), '21-30 days',
+                                              ifelse(between(Recency, 31, 50), '31-50 days', '>50 days')))))) %>% 
+  mutate(Sex = ifelse(Sex==1,"Women","Men")) 
+
+# spliting into discrete groups with levels to make & identify grids later on
+basetable_summer$segm.freq <- factor(basetable_summer$segm.freq, levels=c('>5', '5', '4', '3', '2', '1'))
+basetable_summer$segm.rec <- factor(basetable_summer$segm.rec, levels=c('>50 days', '31-50 days', '21-30 days', '11-20 days', '6-10 days', '0-5 days'))
+
+
+basetable_summer$Sex <- factor(basetable_summer$Sex, levels=c("Men","Women"))
+
+summary(basetable_summer)
+```
+
+
+```{r}
+lcg.product <- summer_trx %>%
+            left_join(customer,by="CustomerID")%>% select(CustomerID,ProductID,Value,CustomerType) 
+```
+
+Distribution of product with customer Type (might be usefull for after)
+```{r}
+lcg.product2 <- lcg.product %>% 
+            group_by(ProductID) %>% 
+              summarise(Monetary= sum(Value),Type1= sum(ifelse(CustomerType==1,1,0)),Type2= sum(ifelse(CustomerType==2,1,0)),Type3= sum(ifelse(CustomerType==3,1,0)),Type4= sum(ifelse(CustomerType==4,1,0)))
+lcg.product2 
+```                        
+
+
+Life cycle grid by quantity , frequency , recency 
+
+```{r}
+lcg <- basetable_summer %>%
+  group_by(segm.rec, segm.freq) %>%
+  summarise(quantity=n(),money= sum(Monetary)) %>%
+  mutate(player="player") %>%
+  ungroup()
+```
+
+```{r}
+ggplot(lcg, aes(x=player,y=quantity, fill=quantity)) +
+  theme_bw() +
+  theme(panel.grid = element_blank())+
+  geom_bar(aes(y=quantity), stat='identity', alpha=0.5) +
+  geom_text(aes(y=max(quantity)/2, label=round(quantity,0)), size=4) +
+  facet_grid(segm.freq ~ segm.rec) +
+  theme(axis.text.x=element_text(angle=90, hjust=.5, vjust=.5, face="plain")) +
+  ggtitle("Life Cycle Grids - Number of player per Recency & Frequency")
+```
+
+Life cycle grid by monetary , frequency , recency 
+
+```{r}
+ggplot(lcg, aes(x=player,y=money, fill=money)) +
+  theme_bw() +
+  theme(panel.grid = element_blank())+
+  geom_bar(aes(y=money), stat='identity', alpha=0.5) +
+  geom_text(aes(y=max(money)/2, label=round(money,0)), size=4) +
+  facet_grid(segm.freq ~ segm.rec) +
+  theme(axis.text.x=element_text(angle=90, hjust=.5, vjust=.5, face="plain")) +
+  ggtitle("Life Cycle Grids - Money earned per Recency & Frequency")
+```
+
+Life cycle grid by gender, frequency , recency
+```{r}
+lcg.gender <- basetable_summer %>%
+  group_by(segm.rec, segm.freq, Sex) %>%
+  summarise(quantity=n(),money= sum(Monetary)) %>%
+  mutate(player="player") %>%
+  ungroup()
+```
+
+```{r}
+ggplot(lcg.gender, aes(x=Sex,y=quantity, fill=Sex)) +
+  theme_bw() +
+  theme(panel.grid = element_blank())+
+  geom_bar(aes(y=quantity), stat='identity', alpha=0.5) +
+  geom_text(aes(y=max(quantity)/2, label=round(quantity,0)), size=4) +
+  facet_grid(segm.freq ~ segm.rec) +
+  theme(axis.text.x=element_text(angle=90, hjust=.5, vjust=.5, face="plain")) +
+  ggtitle("Life Cycle Grids - Gender per Recency & Frequency")
+```
+Life cycle grid by gender, frequency , recency
+```{r}
+ggplot(lcg.gender, aes(x=Sex,y=money, fill=Sex)) +
+  theme_bw() +
+  theme(panel.grid = element_blank())+
+  geom_bar(aes(y=money), stat='identity', alpha=0.5) +
+  geom_text(aes(y=max(money)/2, label=round(money,0)), size=4) +
+  facet_grid(segm.freq ~ segm.rec) +
+  theme(axis.text.x=element_text(angle=90, hjust=.5, vjust=.5, face="plain")) +
+  ggtitle("Life Cycle Grids - Money earned per Gender, Recency & Frequency")
+```
+
+
+
+Life cycle grid by customer type and Quantity
+
+```{r}
+lcg.test <- basetable_summer %>%
+  group_by(CustomerType, segm.rec, segm.freq) %>%
+  # calculating cumulative values
+  summarise(quantity=n(),
+            money= sum(Monetary)) %>%
+  ungroup()
+```
+
+```{r}
+ggplot(lcg.test, aes(x=CustomerType, fill=CustomerType)) +
+  theme_bw() +
+  theme(panel.grid = element_blank())+
+  geom_bar(aes(y=quantity), stat='identity', alpha=0.5) +
+  geom_text(aes(y=quantity, label=round(quantity,0)), size=3) +
+  facet_grid(segm.freq ~ segm.rec) +
+  theme(axis.text.x=element_text(angle=90, hjust=.5, vjust=.5, face="plain")) +
+  ggtitle("LifeCycle Grids - Number of player per Customer type, Recency & Frequency ")
+```
+
+
+Life cycle grid by customer type and Moneytary value
+```{r}
+ggplot(lcg.test, aes(x=CustomerType, fill=CustomerType)) +
+  theme_bw() +
+  theme(panel.grid = element_blank())+
+  geom_bar(aes(y=money), stat='identity', alpha=0.5) +
+  geom_text(aes(y=money, label=round(money,0)), size=2) +
+  facet_grid(segm.freq ~ segm.rec) +
+  theme(axis.text.x=element_text(angle=90, hjust=.5, vjust=.5, face="plain")) +
+  ggtitle("LifeCycle Grids - Money earned per Customer type, Recency & Frequency ")
+```
+
+Life cycle grid by customer type, gender  and Quantity
+
+```{r}
+lcg.test.gender <- basetable_summer %>%
+  group_by(CustomerType, segm.rec, segm.freq,Sex) %>%
+  # calculating cumulative values
+  summarise(quantity=n(),
+            money= sum(Monetary)) %>%
+  ungroup()
+```
+
+```{r}
+ggplot(lcg.test.gender, aes(x=CustomerType,y=quantity, fill=Sex)) +
+  theme_bw() +
+  theme(panel.grid = element_blank())+
+  geom_bar(aes(y=quantity), stat='identity', alpha=0.5) +
+  #geom_text(aes(y=quantity, label=round(quantity,0)), size=2) +
+  facet_grid(segm.freq ~ segm.rec) +
+  theme(axis.text.x=element_text(angle=90, hjust=.5, vjust=.5, face="plain")) +
+  ggtitle("Number of player per Customer type, Gender, Recency & Frequency")
+```
+Life cycle grid by customer type, gender  and Monetary Value 
+
+```{r}
+ggplot(lcg.test.gender, aes(x=CustomerType, fill=Sex)) +
+  theme_bw() +
+  theme(panel.grid = element_blank())+
+  geom_bar(aes(y=money), stat='identity', alpha=0.5) +
+  #geom_text(aes(y=money, label=round(money,0)), size=2) +
+  facet_grid(segm.freq ~ segm.rec) +
+  theme(axis.text.x=element_text(angle=90, hjust=.5, vjust=.5, face="plain")) +
+  ggtitle("LifeCycle Grids - Money earned per Customer type, Recency & Frequency ")
+```
+
+
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#  Assignment 3 (3,5 points) - Churn analysis 
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+## This assignment focuses on understanding churn after the summer period - i.e., defined as not performing any microtransactions in fall 2018. According to this definition calculate which customers have churned in the fall using the fall financial and usage transaction database. 
+
+## Update the basetable from assignment 1 with this churn information and check the average churn rate.
+
+## Use logistic regression to find the significant factors that affect the churn rate of a customer. Did the fall bonus have any impact on the churn rate? You can add additional independent variables to the basetable as well but please motivate why you would think that they affect churn. 
+
+```{r}
+# Status Encoding : 
+# 0 = No Sessions
+# 1 = Sessions Only
+# 2 = Transactions
+
+churn_status <- customer %>% select(CustomerID)
+churn_status[churn_status$CustomerID %in% unique(summer_sess$CustomerID),"summer_status"] <- 1
+churn_status[churn_status$CustomerID %in% unique(summer_trx$CustomerID),"summer_status"] <- 2
+churn_status[churn_status$CustomerID %in% unique(fall_sess$CustomerID),"fall_status"] <- 1
+churn_status[churn_status$CustomerID %in% unique(fall_trx$CustomerID),"fall_status"] <- 2
+churn_status[is.na(churn_status)] <- 0
+
+# Churn Encoding : 
+# 0 = No churn
+# 1 = Partial churn (transactions -> sessions only)
+# 2 = Total churn (transactions -> no sessions)
+
+# Churn from trx to sess or no sess
+churn_status[churn_status$summer_status == 2 & churn_status$fall_status == 2,"churn_trx"] <- 0
+churn_status[churn_status$summer_status == 2 & churn_status$fall_status != 2,"churn_trx"] <- 1
+
+# Churn from sess (including trx) to no sess
+churn_status[churn_status$summer_status != 0 & churn_status$fall_status != 0,"churn_sess"] <- 0
+churn_status[churn_status$summer_status != 0 & churn_status$fall_status == 0,"churn_sess"] <- 1
+
+# Churn from trx to no sess
+churn_status[churn_status$summer_status == 2 & churn_status$fall_status != 0,"churn_total"] <- 0
+churn_status[churn_status$summer_status == 2 & churn_status$fall_status == 0,"churn_total"] <- 1
+
+
+
+churn_status <- churn_status %>% filter(!(summer_status == 0 & fall_status == 0))
+churn_status
+```
+```{r}
+churn_matrix <- matrix(nrow = 3, ncol = 3)
+
+for(i in 1:3){
+  for(j in 1:3){
+    value = churn_status %>% 
+        filter(summer_status == i-1 & fall_status == j-1) %>% 
+        summarise(value = n_distinct(CustomerID))
+    
+    churn_matrix[i,j] <- value$value
+  }
+}
+
+churn_matrix <- data.frame(churn_matrix)
+rownames(churn_matrix) <- c("Inflow","Summer_sessions","Summer_transactions")
+colnames(churn_matrix) <- c("Outflow","Fall_sessions","Fall_transactions")
+
+
+churn_matrix <- churn_matrix[c("Summer_sessions","Summer_transactions","Inflow"),
+                            c("Fall_sessions","Fall_transactions","Outflow")]
+
+churn_matrix <- rbind(churn_matrix, data.frame(as.list(colSums(churn_matrix))))
+churn_matrix <- cbind(churn_matrix,t(data.frame(as.list(rowSums(churn_matrix)))))
+colnames(churn_matrix) <- c(colnames(churn_matrix)[-4],"Total")
+rownames(churn_matrix) <- c(rownames(churn_matrix)[-4],"Total")
+
+
+churn_matrix
+```
+
+
+
+We are going to update the basetable with the churn information 
+
+
+```{r}
+basetable_churn <- basetable_summer %>% left_join(churn_status, by='CustomerID') %>% 
+                                        select(-c("NbTrx","NbSess","summer_status","fall_status"))
+
+basetable_churn <- basetable_churn %>%
+  mutate(Type1= ifelse(CustomerType==1,1,0), Type2 =ifelse(CustomerType==2,1,0),Type3 =ifelse(CustomerType==3,1,0) ) %>%
+  select(-c("CustomerType","segm.freq","segm.rec"))
+
+basetable_churn_trx <- basetable_churn[!is.na(basetable_churn$churn_trx),] %>% select(-c("churn_sess","churn_total"))
+basetable_churn_sess <- basetable_churn[!is.na(basetable_churn$churn_sess),] %>% select(-c("churn_trx","churn_total"))
+basetable_churn_total <- basetable_churn[!is.na(basetable_churn$churn_total),] %>% select(-c("churn_trx","churn_sess"))
+basetable_churn_total
+```
+
+```{r}
+basetable_churn_trx %>% summarise(mean(churn_trx))
+```
+We have 66% of churn in the database it is HUGE ! 
+
+
+## Log Reg 1 : churn_trx
+
+Let's split the dataset to perform our logisitic regression 
+```{r}
+set.seed(654)
+split <- sample.split(basetable_churn_trx$CustomerID, SplitRatio = 0.70)
+training <- subset(basetable_churn_trx, split == TRUE)
+validation <- subset(basetable_churn_trx, split == FALSE)
+
+modeltraining = glm(churn_trx~.,family=binomial(link='logit'),data=training)
+summary(modeltraining)
+```
+
+
+We only keep significant variables thanks to the stepwise selection 
+```{r}
+#select model which optimizes BIC criteria
+model.backward <- step(modeltraining,direction="backward",k=log(nrow(training)),trace=0)
+pred.backward <- predict(model.backward, newdata=validation, type="response")
+summary(model.backward)
+```
+#We need to find the best treshhold to get the highest PCC
+
+```{r}
+pred <- predict(model.backward, type = "response", newdata = validation)
+validation$prob_churn <- pred
+
+# Using probability cutoff of 67%.
+
+pred_churn <- factor(ifelse(pred >= 0.67, "Yes", "No"))
+actual_churn <- factor(ifelse(validation$churn==1,"Yes","No"))
+table(actual_churn,pred_churn)
+```
+
+```{r}
+PCC = mean(actual_churn==pred_churn)
+PCC
+```
+
+## LogReg 2 : churn_sess
+
+Let's split the dataset to perform our logisitic regression 
+```{r}
+set.seed(654)
+split <- sample.split(basetable_churn_sess$CustomerID, SplitRatio = 0.70)
+training <- subset(basetable_churn_sess, split == TRUE)
+validation <- subset(basetable_churn_sess, split == FALSE)
+
+modeltraining = glm(churn_sess~.,family=binomial(link='logit'),data=training)
+summary(modeltraining)
+```
+
+We only keep significant variables thanks to the stepwise selection 
+```{r}
+#select model which optimizes BIC criteria
+model.backward <- step(modeltraining,direction="backward",k=log(nrow(training)),trace=0)
+pred.backward <- predict(model.backward, newdata=validation, type="response")
+summary(model.backward)
+```
+
+## LogReg 3 : churn_total
+
+Let's split the dataset to perform our logisitic regression 
+```{r}
+set.seed(654)
+split <- sample.split(basetable_churn_total$CustomerID, SplitRatio = 0.70)
+training <- subset(basetable_churn_total, split == TRUE)
+validation <- subset(basetable_churn_total, split == FALSE)
+
+modeltraining = glm(churn_total~.,family=binomial(link='logit'),data=training)
+summary(modeltraining)
+```
+
+We only keep significant variables thanks to the stepwise selection 
+```{r}
+#select model which optimizes BIC criteria
+model.backward <- step(modeltraining,direction="backward",k=log(nrow(training)),trace=0)
+pred.backward <- predict(model.backward, newdata=validation, type="response")
+summary(model.backward)
+```
