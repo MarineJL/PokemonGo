@@ -35,12 +35,9 @@ library(tidyr)
 library(caTools)
 ```
 
-
 Import and read the data
 ```{r}
-# setwd("~/Desktop/MSc Data Analytics & AI/Semester 2 /Customer Analytics/Pokemon Go case")
-setwd("C:/Users/Charles-Louis/Desktop/MSc/2 - Customer Analytics/PokemonGo")
-
+setwd("data")
 
 # 1 -	Customerdata: contains player-related information 
 customer = read.csv("customerdata.csv" )
