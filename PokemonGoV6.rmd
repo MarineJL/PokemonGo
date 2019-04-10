@@ -554,43 +554,61 @@ churn_status[churn_status$summer_status != 0 & churn_status$fall_status == 0,"ch
 churn_status[churn_status$summer_status == 2 & churn_status$fall_status != 0,"churn_total"] <- 0
 churn_status[churn_status$summer_status == 2 & churn_status$fall_status == 0,"churn_total"] <- 1
 
-
-
 churn_status <- churn_status %>% filter(!(summer_status == 0 & fall_status == 0))
 churn_status
 ```
 ```{r}
-churn_matrix <- matrix(nrow = 3, ncol = 3)
+create.churnmatrix <- function(churn_stat){
+  churn_mat <- matrix(nrow = 3, ncol = 3)
 
-for(i in 1:3){
-  for(j in 1:3){
-    value = churn_status %>% 
-        filter(summer_status == i-1 & fall_status == j-1) %>% 
-        summarise(value = n_distinct(CustomerID))
-    
-    churn_matrix[i,j] <- value$value
+  for(i in 1:3){
+    for(j in 1:3){
+      value = churn_stat %>% 
+          filter(summer_status == i-1 & fall_status == j-1) %>% 
+          summarise(value = n_distinct(CustomerID))
+      
+      churn_mat[i,j] <- value$value
+    }
   }
+  
+  churn_mat <- data.frame(churn_mat)
+  rownames(churn_mat) <- c("Inflow","Summer_sessions","Summer_transactions")
+  colnames(churn_mat) <- c("Outflow","Fall_sessions","Fall_transactions")
+  
+  
+  churn_mat <- churn_mat[c("Summer_sessions","Summer_transactions","Inflow"),
+                              c("Fall_sessions","Fall_transactions","Outflow")]
+  
+  churn_mat <- rbind(churn_mat, data.frame(as.list(colSums(churn_mat))))
+  churn_mat <- cbind(churn_mat,t(data.frame(as.list(rowSums(churn_mat)))))
+  colnames(churn_mat) <- c(colnames(churn_mat)[-4],"Total")
+  rownames(churn_mat) <- c(rownames(churn_mat)[-4],"Total")
+  
+  churn_mat["Total","Total"] <- NA
+  churn_mat["Inflow","Outflow"] <- NA
+  churn_mat["Total","Outflow"] <- churn_mat["Total","Fall_sessions"] + churn_mat["Total","Fall_transactions"]
+  churn_mat["Inflow","Total"] <- churn_mat["Summer_sessions","Total"] + churn_mat["Summer_transactions","Total"]
+  
+  return(churn_mat)
 }
 
-churn_matrix <- data.frame(churn_matrix)
-rownames(churn_matrix) <- c("Inflow","Summer_sessions","Summer_transactions")
-colnames(churn_matrix) <- c("Outflow","Fall_sessions","Fall_transactions")
-
-
-churn_matrix <- churn_matrix[c("Summer_sessions","Summer_transactions","Inflow"),
-                            c("Fall_sessions","Fall_transactions","Outflow")]
-
-churn_matrix <- rbind(churn_matrix, data.frame(as.list(colSums(churn_matrix))))
-churn_matrix <- cbind(churn_matrix,t(data.frame(as.list(rowSums(churn_matrix)))))
-colnames(churn_matrix) <- c(colnames(churn_matrix)[-4],"Total")
-rownames(churn_matrix) <- c(rownames(churn_matrix)[-4],"Total")
-
-churn_matrix["Total","Total"] <- NA
-churn_matrix["Inflow","Outflow"] <- NA
-churn_matrix["Total","Outflow"] <- churn_matrix["Total","Fall_sessions"] + churn_matrix["Total","Fall_transactions"]
-churn_matrix["Inflow","Total"] <- churn_matrix["Summer_sessions","Total"] + churn_matrix["Summer_transactions","Total"]
-
+churn_matrix <- create.churnmatrix(churn_status)
 churn_matrix
+```
+
+We create this matrix for each Customer Type
+```{r}
+for(i in 1:4){
+  FilterType <- customer %>% filter(CustomerType == i) %>% select(CustomerID)
+  churn_matrix_type <- create.churnmatrix(churn_status %>% filter(CustomerID %in% FilterType$CustomerID))
+  nam <- paste("churn_matrix_type", i, sep = "")
+  assign(nam, churn_matrix_type)
+}
+
+churn_matrix_type1
+churn_matrix_type2
+churn_matrix_type3
+churn_matrix_type4
 ```
 
 
@@ -601,7 +619,7 @@ basetable_churn <- basetable_summer %>% left_join(churn_status, by='CustomerID')
                                         select(-c("NbTrx","NbSess","summer_status","fall_status"))
 
 basetable_churn <- basetable_churn %>%
-  mutate(Type1= ifelse(CustomerType==1,1,0), Type2 =ifelse(CustomerType==2,1,0),Type3 =ifelse(CustomerType==3,1,0) ) %>%
+  mutate(Type1= ifelse(CustomerType==1,1,0), Type2 = ifelse(CustomerType==2,1,0),Type3 =ifelse(CustomerType==3,1,0) ) %>%
   select(-c("CustomerType","segm.freq","segm.rec"))
 
 basetable_churn_trx <- basetable_churn[!is.na(basetable_churn$churn_trx),] %>% select(-c("churn_sess","churn_total"))
