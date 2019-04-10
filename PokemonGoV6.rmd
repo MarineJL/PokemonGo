@@ -588,6 +588,10 @@ churn_matrix <- cbind(churn_matrix,t(data.frame(as.list(rowSums(churn_matrix))))
 colnames(churn_matrix) <- c(colnames(churn_matrix)[-4],"Total")
 rownames(churn_matrix) <- c(rownames(churn_matrix)[-4],"Total")
 
+churn_matrix["Total","Total"] <- NA
+churn_matrix["Inflow","Outflow"] <- NA
+churn_matrix["Total","Outflow"] <- churn_matrix["Total","Fall_sessions"] + churn_matrix["Total","Fall_transactions"]
+churn_matrix["Inflow","Total"] <- churn_matrix["Summer_sessions","Total"] + churn_matrix["Summer_transactions","Total"]
 
 churn_matrix
 ```
@@ -595,8 +599,6 @@ churn_matrix
 
 
 We are going to update the basetable with the churn information 
-
-
 ```{r}
 basetable_churn <- basetable_summer %>% left_join(churn_status, by='CustomerID') %>% 
                                         select(-c("NbTrx","NbSess","summer_status","fall_status"))
